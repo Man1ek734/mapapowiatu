@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b5d3b">
+  <title>Mapa Powiatu Opatowskiego</title>
+  <meta name="description" content="Interaktywna mapa Powiatu Opatowskiego: restauracje, zabytki, noclegi, trasy rowerowe, transport, zdrowie, rekreacja i inne miejsca.">
+  <link rel="preconnect" href="https://unpkg.com">
+  <link rel="preconnect" href="https://tile.openstreetmap.org">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="./" aria-label="Mapa Powiatu Opatowskiego">
+      <span class="brand-mark">PO</span>
+      <span class="brand-copy">
+        <strong>Mapa Powiatu</strong>
+        <small>Powiat Opatowski</small>
+      </span>
+    </a>
+    <div class="top-actions">
+      <button class="ghost-btn" id="locateBtn" type="button" title="Pokaż moją lokalizację">◎ <span>Moja lokalizacja</span></button>
+      <button class="ghost-btn mobile-filters" id="filtersBtn" type="button" aria-controls="sidebar" aria-expanded="false">☰ <span>Filtry</span></button>
+    </div>
+  </header>
+
+  <main class="app">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-head">
+        <div>
+          <p class="eyebrow">ODKRYWAJ REGION</p>
+          <h1>Co chcesz znaleźć?</h1>
+        </div>
+        <button class="close-sidebar" id="closeSidebar" type="button" aria-label="Zamknij filtry">×</button>
+      </div>
+
+      <label class="search">
+        <span class="search-icon">⌕</span>
+        <input id="searchInput" type="search" placeholder="Szukaj miejsca…" autocomplete="off">
+        <button id="clearSearch" type="button" aria-label="Wyczyść wyszukiwanie">×</button>
+      </label>
+
+      <div class="quick-row">
+        <button type="button" id="selectAll">Pokaż wszystko</button>
+        <button type="button" id="clearAll">Wyczyść</button>
+      </div>
+
+      <div class="filters" id="filters">
+        <button class="filter active" data-category="food">
+          <span class="filter-main"><span class="emoji">🍴</span><span>Gastronomia</span></span>
+          <span class="count" data-count="food">0</span>
+        </button>
+        <button class="filter active" data-category="attractions">
+          <span class="filter-main"><span class="emoji">🏛️</span><span>Zabytki i atrakcje</span></span>
+          <span class="count" data-count="attractions">0</span>
+        </button>
+        <button class="filter active" data-category="lodging">
+          <span class="filter-main"><span class="emoji">🛏️</span><span>Noclegi</span></span>
+          <span class="count" data-count="lodging">0</span>
+        </button>
+        <button class="filter active" data-category="cycling">
+          <span class="filter-main"><span class="emoji">🚴</span><span>Trasy rowerowe</span></span>
+          <span class="count" data-count="cycling">0</span>
+        </button>
+        <button class="filter active" data-category="recreation">
+          <span class="filter-main"><span class="emoji">🌳</span><span>Sport i rekreacja</span></span>
+          <span class="count" data-count="recreation">0</span>
+        </button>
+        <button class="filter active" data-category="health">
+          <span class="filter-main"><span class="emoji">🏥</span><span>Zdrowie</span></span>
+          <span class="count" data-count="health">0</span>
+        </button>
+        <button class="filter active" data-category="transport">
+          <span class="filter-main"><span class="emoji">🚌</span><span>Transport i parkingi</span></span>
+          <span class="count" data-count="transport">0</span>
+        </button>
+        <button class="filter active" data-category="public">
+          <span class="filter-main"><span class="emoji">🏢</span><span>Urzędy i usługi</span></span>
+          <span class="count" data-count="public">0</span>
+        </button>
+        <button class="filter active" data-category="shopping">
+          <span class="filter-main"><span class="emoji">🛍️</span><span>Zakupy</span></span>
+          <span class="count" data-count="shopping">0</span>
+        </button>
+      </div>
+
+      <section class="results-section">
+        <div class="results-title">
+          <strong>Widoczne miejsca</strong>
+          <span id="visibleCount">0</span>
+        </div>
+        <div class="results" id="results">
+          <div class="empty-state">Dane pojawią się po załadowaniu mapy.</div>
+        </div>
+      </section>
+
+      <div class="data-status" id="status">
+        <span class="status-dot loading"></span>
+        <span>Ładowanie danych OpenStreetMap…</span>
+      </div>
+    </aside>
+
+    <section class="map-shell" aria-label="Interaktywna mapa Powiatu Opatowskiego">
+      <div id="map"></div>
+
+      <div class="map-title-card">
+        <span class="pill">INTERAKTYWNA MAPA</span>
+        <strong>Powiat Opatowski</strong>
+        <small>Kliknij punkt lub trasę, aby zobaczyć szczegóły.</small>
+      </div>
+
+      <div class="map-key">
+        <span><i class="route-line"></i> trasy rowerowe</span>
+        <span><i class="boundary-line"></i> granica powiatu</span>
+      </div>
+
+      <button class="retry-btn hidden" id="retryBtn" type="button">Spróbuj ponownie</button>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span>Dane mapowe © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors</span>
+    <span>Mapa pokazuje obiekty dostępne w bazie OSM.</span>
+  </footer>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
