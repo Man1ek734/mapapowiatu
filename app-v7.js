@@ -22,6 +22,7 @@ const META = {
 };
 
 const map = L.map("map", { zoomControl: true, preferCanvas: true }).setView(CONFIG.center, CONFIG.zoom);
+map.attributionControl.setPrefix("");
 
 map.createPane("countyBoundaryPane");
 map.getPane("countyBoundaryPane").style.zIndex = "450";
