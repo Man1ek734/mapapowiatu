@@ -22,6 +22,15 @@ const META = {
 
 const map = L.map("map", { zoomControl: true, preferCanvas: true }).setView(CONFIG.center, CONFIG.zoom);
 
+// Szara maska jest nad kafelkami mapy, ale pod punktami i trasami.
+map.createPane("countyMaskPane");
+map.getPane("countyMaskPane").style.zIndex = "350";
+map.getPane("countyMaskPane").style.pointerEvents = "none";
+
+map.createPane("countyBoundaryPane");
+map.getPane("countyBoundaryPane").style.zIndex = "450";
+map.getPane("countyBoundaryPane").style.pointerEvents = "none";
+
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
   maxZoom: 19,
   attribution: "&copy; OpenStreetMap contributors"
@@ -212,32 +221,59 @@ rel["boundary"="administrative"]["admin_level"="6"]["name"~"opatowski",i];
 out geom;
 `;
 
-async function fetchCountyGeoJSON() {
-  const url = "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&polygon_geojson=1&countrycodes=pl&q=" +
-    encodeURIComponent("Powiat Opatowski, świętokrzyskie, Polska");
-  const response = await fetch(url, {
-    headers: { "Accept": "application/json" }
-  });
-  if (!response.ok) throw new Error("HTTP " + response.status);
-  const data = await response.json();
-  if (!data.length || !data[0].geojson) throw new Error("Brak geometrii powiatu");
-  return data[0].geojson;
+function samePoint(a, b) {
+  return Math.abs(a[0] - b[0]) < 1e-6 && Math.abs(a[1] - b[1]) < 1e-6;
 }
 
-function geoJsonOuterRingsToLatLngs(geojson) {
-  if (!geojson) return [];
-  if (geojson.type === "Polygon") {
-    return [geojson.coordinates[0].map(([lng, lat]) => [lat, lng])];
+function stitchBoundaryRings(relation) {
+  const segments = (relation.members || [])
+    .filter(member => (!member.role || member.role === "outer") && member.geometry?.length > 1)
+    .map(member => member.geometry.map(point => [point.lat, point.lon]));
+
+  const rings = [];
+
+  while (segments.length) {
+    let ring = segments.shift().slice();
+    let changed = true;
+
+    while (changed && !samePoint(ring[0], ring[ring.length - 1])) {
+      changed = false;
+      const startPoint = ring[0];
+      const endPoint = ring[ring.length - 1];
+
+      for (let i = 0; i < segments.length; i++) {
+        const segment = segments[i];
+        const first = segment[0];
+        const last = segment[segment.length - 1];
+
+        if (samePoint(endPoint, first)) {
+          ring.push(...segment.slice(1));
+        } else if (samePoint(endPoint, last)) {
+          ring.push(...segment.slice(0, -1).reverse());
+        } else if (samePoint(startPoint, last)) {
+          ring.unshift(...segment.slice(0, -1));
+        } else if (samePoint(startPoint, first)) {
+          ring.unshift(...segment.slice(1).reverse());
+        } else {
+          continue;
+        }
+
+        segments.splice(i, 1);
+        changed = true;
+        break;
+      }
+    }
+
+    if (ring.length >= 4) {
+      if (!samePoint(ring[0], ring[ring.length - 1])) ring.push(ring[0]);
+      rings.push(ring);
+    }
   }
-  if (geojson.type === "MultiPolygon") {
-    return geojson.coordinates.map(polygon =>
-      polygon[0].map(([lng, lat]) => [lat, lng])
-    );
-  }
-  return [];
+
+  return rings;
 }
 
-function drawBoundary(data, geojson = null) {
+function drawBoundary(data) {
   if (boundaryLayer) {
     map.removeLayer(boundaryLayer);
     boundaryLayer = null;
@@ -247,65 +283,45 @@ function drawBoundary(data, geojson = null) {
     countyMaskLayer = null;
   }
 
-  let outline = null;
+  const relation = (data.elements || []).find(
+    element => element.type === "relation" && element.tags?.boundary === "administrative"
+  );
+  if (!relation) return;
 
-  if (geojson) {
-    outline = L.geoJSON(geojson, {
-      style: {
-        color: "#0b5d3b",
-        weight: 4,
-        opacity: 1,
-        fill: false
-      },
-      interactive: false
-    }).addTo(map);
+  const rings = stitchBoundaryRings(relation);
+  if (!rings.length) return;
 
-    const outerRings = geoJsonOuterRingsToLatLngs(geojson);
-    if (outerRings.length) {
-      const worldRing = [
-        [-89.9, -179.9],
-        [-89.9, 179.9],
-        [89.9, 179.9],
-        [89.9, -179.9],
-        [-89.9, -179.9]
-      ];
+  // Świat jako zewnętrzny poligon + granice powiatu jako "dziura".
+  // Dzięki fillRule=evenodd wszystko poza powiatem jest szare,
+  // a sam Powiat Opatowski pozostaje w normalnych kolorach mapy.
+  const worldRing = [
+    [-89.9, -179.9],
+    [-89.9, 179.9],
+    [89.9, 179.9],
+    [89.9, -179.9],
+    [-89.9, -179.9]
+  ];
 
-      countyMaskLayer = L.polygon([worldRing, ...outerRings], {
-        stroke: false,
-        fillColor: "#6f7472",
-        fillOpacity: 0.72,
-        fillRule: "evenodd",
-        interactive: false
-      }).addTo(map);
+  countyMaskLayer = L.polygon([worldRing, ...rings], {
+    pane: "countyMaskPane",
+    stroke: false,
+    fill: true,
+    fillColor: "#737876",
+    fillOpacity: 0.78,
+    fillRule: "evenodd",
+    interactive: false
+  }).addTo(map);
 
-      countyMaskLayer.bringToBack();
-    }
-  }
-
-  if (!outline) {
-    const relation = (data.elements || []).find(e => e.type === "relation");
-    if (!relation) return;
-
-    const lines = [];
-    (relation.members || []).forEach(member => {
-      if (member.geometry?.length > 1) {
-        lines.push(member.geometry.map(p => [p.lat, p.lon]));
-      }
-    });
-
-    if (!lines.length) return;
-    outline = L.polyline(lines, {
-      color: "#0b5d3b",
-      weight: 4,
-      opacity: 1,
-      interactive: false
-    }).addTo(map);
-  }
-
-  boundaryLayer = outline;
+  boundaryLayer = L.polyline(rings, {
+    pane: "countyBoundaryPane",
+    color: "#0b5d3b",
+    weight: 4,
+    opacity: 1,
+    interactive: false
+  }).addTo(map);
 
   try {
-    countyBounds = boundaryLayer.getBounds();
+    countyBounds = L.latLngBounds(rings.flat());
     map.fitBounds(countyBounds, { padding: [18, 18] });
 
     const lockedBounds = countyBounds.pad(0.035);
@@ -315,8 +331,6 @@ function drawBoundary(data, geojson = null) {
     requestAnimationFrame(() => {
       map.setMinZoom(map.getZoom());
       map.panInsideBounds(lockedBounds, { animate: false });
-      if (countyMaskLayer) countyMaskLayer.bringToBack();
-      if (boundaryLayer) boundaryLayer.bringToFront();
     });
   } catch (_) {}
 }
@@ -410,10 +424,9 @@ async function loadData() {
   clearData();
 
   try {
-    const [places, boundary, countyGeoJSON] = await Promise.all([
+    const [places, boundary] = await Promise.all([
       overpass(placesQuery),
-      overpass(boundaryQuery).catch(() => ({ elements: [] })),
-      fetchCountyGeoJSON().catch(() => null)
+      overpass(boundaryQuery).catch(() => ({ elements: [] }))
     ]);
 
     const seen = new Set();
@@ -429,7 +442,7 @@ async function loadData() {
       }
     });
 
-    drawBoundary(boundary, countyGeoJSON);
+    drawBoundary(boundary);
     updateCounts();
     applyFilters();
 
