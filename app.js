@@ -33,6 +33,7 @@ Object.keys(META).forEach(key => {
 });
 
 let boundaryLayer = null;
+let countyMaskLayer = null;
 let countyBounds = null;
 let items = [];
 let routes = [];
@@ -211,40 +212,111 @@ rel["boundary"="administrative"]["admin_level"="6"]["name"~"opatowski",i];
 out geom;
 `;
 
-function drawBoundary(data) {
-  const relation = (data.elements || []).find(e => e.type === "relation");
-  if (!relation) return;
-
-  const lines = [];
-  (relation.members || []).forEach(member => {
-    if (member.geometry?.length > 1) {
-      lines.push(member.geometry.map(p => [p.lat, p.lon]));
-    }
+async function fetchCountyGeoJSON() {
+  const url = "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&polygon_geojson=1&countrycodes=pl&q=" +
+    encodeURIComponent("Powiat Opatowski, świętokrzyskie, Polska");
+  const response = await fetch(url, {
+    headers: { "Accept": "application/json" }
   });
+  if (!response.ok) throw new Error("HTTP " + response.status);
+  const data = await response.json();
+  if (!data.length || !data[0].geojson) throw new Error("Brak geometrii powiatu");
+  return data[0].geojson;
+}
 
-  if (!lines.length) return;
-  boundaryLayer = L.polyline(lines, {
-    color: "#0b5d3b",
-    weight: 3,
-    opacity: .85,
-    dashArray: "8 7",
-    interactive: false
-  }).addTo(map);
+function geoJsonOuterRingsToLatLngs(geojson) {
+  if (!geojson) return [];
+  if (geojson.type === "Polygon") {
+    return [geojson.coordinates[0].map(([lng, lat]) => [lat, lng])];
+  }
+  if (geojson.type === "MultiPolygon") {
+    return geojson.coordinates.map(polygon =>
+      polygon[0].map(([lng, lat]) => [lat, lng])
+    );
+  }
+  return [];
+}
+
+function drawBoundary(data, geojson = null) {
+  if (boundaryLayer) {
+    map.removeLayer(boundaryLayer);
+    boundaryLayer = null;
+  }
+  if (countyMaskLayer) {
+    map.removeLayer(countyMaskLayer);
+    countyMaskLayer = null;
+  }
+
+  let outline = null;
+
+  if (geojson) {
+    outline = L.geoJSON(geojson, {
+      style: {
+        color: "#0b5d3b",
+        weight: 4,
+        opacity: 1,
+        fill: false
+      },
+      interactive: false
+    }).addTo(map);
+
+    const outerRings = geoJsonOuterRingsToLatLngs(geojson);
+    if (outerRings.length) {
+      const worldRing = [
+        [-89.9, -179.9],
+        [-89.9, 179.9],
+        [89.9, 179.9],
+        [89.9, -179.9],
+        [-89.9, -179.9]
+      ];
+
+      countyMaskLayer = L.polygon([worldRing, ...outerRings], {
+        stroke: false,
+        fillColor: "#6f7472",
+        fillOpacity: 0.72,
+        fillRule: "evenodd",
+        interactive: false
+      }).addTo(map);
+
+      countyMaskLayer.bringToBack();
+    }
+  }
+
+  if (!outline) {
+    const relation = (data.elements || []).find(e => e.type === "relation");
+    if (!relation) return;
+
+    const lines = [];
+    (relation.members || []).forEach(member => {
+      if (member.geometry?.length > 1) {
+        lines.push(member.geometry.map(p => [p.lat, p.lon]));
+      }
+    });
+
+    if (!lines.length) return;
+    outline = L.polyline(lines, {
+      color: "#0b5d3b",
+      weight: 4,
+      opacity: 1,
+      interactive: false
+    }).addTo(map);
+  }
+
+  boundaryLayer = outline;
 
   try {
     countyBounds = boundaryLayer.getBounds();
     map.fitBounds(countyBounds, { padding: [18, 18] });
 
-    // Ograniczamy mapę do Powiatu Opatowskiego.
-    // Niewielki margines zapobiega "odbiciu" mapy przy samych krawędziach ekranu.
     const lockedBounds = countyBounds.pad(0.035);
     map.setMaxBounds(lockedBounds);
     map.options.maxBoundsViscosity = 1.0;
 
-    // Użytkownik może przybliżać, ale nie oddali mapy poza cały powiat.
     requestAnimationFrame(() => {
       map.setMinZoom(map.getZoom());
       map.panInsideBounds(lockedBounds, { animate: false });
+      if (countyMaskLayer) countyMaskLayer.bringToBack();
+      if (boundaryLayer) boundaryLayer.bringToFront();
     });
   } catch (_) {}
 }
@@ -338,9 +410,10 @@ async function loadData() {
   clearData();
 
   try {
-    const [places, boundary] = await Promise.all([
+    const [places, boundary, countyGeoJSON] = await Promise.all([
       overpass(placesQuery),
-      overpass(boundaryQuery).catch(() => ({ elements: [] }))
+      overpass(boundaryQuery).catch(() => ({ elements: [] })),
+      fetchCountyGeoJSON().catch(() => null)
     ]);
 
     const seen = new Set();
@@ -356,8 +429,7 @@ async function loadData() {
       }
     });
 
-    if (boundaryLayer) map.removeLayer(boundaryLayer);
-    drawBoundary(boundary);
+    drawBoundary(boundary, countyGeoJSON);
     updateCounts();
     applyFilters();
 
