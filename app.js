@@ -33,6 +33,7 @@ Object.keys(META).forEach(key => {
 });
 
 let boundaryLayer = null;
+let countyBounds = null;
 let items = [];
 let routes = [];
 let userMarker = null;
@@ -231,7 +232,20 @@ function drawBoundary(data) {
   }).addTo(map);
 
   try {
-    map.fitBounds(boundaryLayer.getBounds(), { padding: [24, 24] });
+    countyBounds = boundaryLayer.getBounds();
+    map.fitBounds(countyBounds, { padding: [18, 18] });
+
+    // Ograniczamy mapę do Powiatu Opatowskiego.
+    // Niewielki margines zapobiega "odbiciu" mapy przy samych krawędziach ekranu.
+    const lockedBounds = countyBounds.pad(0.035);
+    map.setMaxBounds(lockedBounds);
+    map.options.maxBoundsViscosity = 1.0;
+
+    // Użytkownik może przybliżać, ale nie oddali mapy poza cały powiat.
+    requestAnimationFrame(() => {
+      map.setMinZoom(map.getZoom());
+      map.panInsideBounds(lockedBounds, { animate: false });
+    });
   } catch (_) {}
 }
 
@@ -416,6 +430,14 @@ $("#locateBtn").addEventListener("click", () => {
         iconAnchor: [9, 9]
       })
     }).addTo(map).bindPopup("Twoja lokalizacja");
+
+    if (countyBounds && !countyBounds.contains([lat, lon])) {
+      map.removeLayer(userMarker);
+      userMarker = null;
+      map.fitBounds(countyBounds, { padding: [18, 18] });
+      showToast("Twoja lokalizacja jest poza Powiatem Opatowskim.");
+      return;
+    }
 
     map.setView([lat, lon], 14, { animate: true });
     userMarker.openPopup();
