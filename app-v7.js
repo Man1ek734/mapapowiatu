@@ -335,8 +335,8 @@ function drawBoundary(data) {
 
   boundaryLayer = L.polyline(rings, {
     pane: "countyBoundaryPane",
-    color: "#0b5d3b",
-    weight: 4,
+    color: "#ff0000",
+    weight: 7,
     opacity: 1,
     interactive: false
   }).addTo(map);
